@@ -64,8 +64,8 @@ int main(int argc, char *argv[]) {
   // socket()
   sockfd = socket(AF_INET, SOCK_DGRAM, IP_PROTOCOL);
   struct timeval tv;
-  tv.tv_sec = 0;     // 30 Secs Timeout
-  tv.tv_usec = 3000; // Not init'ing this can cause strange errors
+  tv.tv_sec = 0;      // 30 Secs Timeout
+  tv.tv_usec = 30000; // Not init'ing this can cause strange errors
   setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv,
              sizeof(struct timeval));
 
@@ -120,42 +120,86 @@ startlow:
     char *timeout_window = calloc(1, WIN_SIZE * sizeof(char *));
 
     int seq_no = 0;
-    int last_received_ack = -1;
-    int part_of_file = -1;
+    int last_received_ack = -5;
+    int last_to_last_ack = -5;
+    int initial_ack = 0;
+    int partindex = 0;
+    fseek(fp, 0, SEEK_END); // seek to end of file
+    int max_parts =
+        ceil(ftell(fp) / (NET_BUF_SIZE - 3)) + 1; // get current file pointer
+    printf("parts of file %d \n", max_parts);
+    fseek(fp, 0, SEEK_SET); // seek back to beginning of file
 
     FileUDPPacket *sendData = calloc(1, sizeof(FileUDPPacket));
     FileUDPPacket *recAck = calloc(1, sizeof(FileUDPPacket));
-
+    int ii = 0;
     do {
       printf("in loop");
-      for (int i = 0; i < WIN_SIZE; i++) {
+      for (int i = 0; i < WIN_SIZE - 1; i++) {
+        printf("seq no %d \n", seq_no);
         sendData->type = DATA;
         sendData->win_size = WIN_SIZE;
         // strcpy(sendData->data, "Hello, World!");
+        // memset(sendData->data, 0, NET_BUF_SIZE - 3);
+        // sendData->data = buffer;
         sendFile(fp, sendData->data, NET_BUF_SIZE - 3);
         sendData->seq_no = seq_no;
-        seq_no = (seq_no + 1) % WIN_SIZE;
+
         sendto(sockfd, (char *)sendData, NET_BUF_SIZE, sendrecvflag,
                (struct sockaddr *)&addr_con, addrlen);
+        partindex++;
+        seq_no = (seq_no + 1) % WIN_SIZE;
         printf("in inner loop");
         recAck->type = -1;
         recAck->seq_no = -1;
         recvfrom(sockfd, (char *)recAck, NET_BUF_SIZE, sendrecvflag,
                  (struct sockaddr *)&addr_con, &addrlen);
         if (recAck->type == ACK && recAck->seq_no >= 0) {
+          printf("ack received %d", recAck->seq_no);
           last_received_ack = recAck->seq_no;
+          if (last_received_ack == 0) {
+            initial_ack = 1;
+          }
         } else if (recAck->type == RRQ) {
           goto startlow;
+        } else {
+          // printf("timed out ack receive");
         }
-        part_of_file++;
+      }
 
-      } // printf("\n%s\n", (char *)Readreq);
-      fseek(fp, -1 * (WIN_SIZE - last_received_ack), SEEK_CUR);
-      part_of_file -= (WIN_SIZE - last_received_ack);
-      last_received_ack = -1;
-      seq_no = 0;
+      int rewind =
+          WIN_SIZE - 1 - ((last_received_ack - last_to_last_ack) % WIN_SIZE);
+
+      if (last_received_ack == last_to_last_ack) {
+        if (initial_ack == 0 && last_received_ack == 0 &&
+            last_to_last_ack == 0) {
+          fseek(fp, -1 * (WIN_SIZE - 1) * (NET_BUF_SIZE - 3), SEEK_CUR);
+          partindex -= (WIN_SIZE - 1);
+        } else if (initial_ack == 1 && last_received_ack == 0 &&
+                   last_to_last_ack == 0) {
+          fseek(fp, -1 * (WIN_SIZE - 2) * (NET_BUF_SIZE - 3), SEEK_CUR);
+          partindex -= (WIN_SIZE - 2);
+        } else {
+          fseek(fp, -1 * (WIN_SIZE - 1) * (NET_BUF_SIZE - 3), SEEK_CUR);
+          partindex -= (WIN_SIZE - 1);
+        }
+
+        printf("seeked back by %d", WIN_SIZE);
+      } else {
+        fseek(fp, -1 * (rewind) * (NET_BUF_SIZE - 3), SEEK_CUR);
+        partindex -= (rewind);
+        printf("seeked back by %d", rewind);
+      }
+
+      seq_no = (last_received_ack + 1) % WIN_SIZE;
+      last_to_last_ack = last_received_ack;
+      if (ii > 500) {
+        // limit to 1000 sends only
+        break;
+      }
+      ii++;
       // free(threadi);
-    } while (fp);
+    } while (partindex <= max_parts && !feof(fp));
     free(sendData);
     free(recAck);
   }

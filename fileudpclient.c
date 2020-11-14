@@ -1,9 +1,7 @@
 #include "fileudp.h"
 
 // function for decryption
-char Cipher(char ch) {
-  return ch; //^ cipherKey;
-}
+char Cipher(char ch) { return ch ^ cipherKey; }
 
 // function to receive file
 int recvFile(char *buf, int s) {
@@ -65,30 +63,42 @@ start:
   // printf("\n%s\n", (char *)Readreq);
   recvfrom(sockfd, (char *)Recvack, NET_BUF_SIZE, sendrecvflag,
            (struct sockaddr *)&addr_con, &addrlen);
-  printf("%d %d %s", Recvack->seq_no, Recvack->type, (char *)Recvack);
+  // printf("%d %d %s", Recvack->seq_no, Recvack->type, (char *)Recvack);
+
+  int got_part = 0;
+
   if (Recvack->seq_no == 0 && Recvack->type == ACK) {
     // start file transmission
     FileUDPPacket *recFile = calloc(1, sizeof(FileUDPPacket));
     FileUDPPacket *sendAck = calloc(1, sizeof(FileUDPPacket));
-    printf("transmission started");
+    printf("transmission started\n");
     int lrlowack = -1;
     while (1) {
       recvfrom(sockfd, (char *)recFile, NET_BUF_SIZE, sendrecvflag,
                (struct sockaddr *)&addr_con, &addrlen);
-      printf("%s %d %d ", recFile->data, recFile->seq_no, recFile->type);
+      // printf("%s \n %d  \n %d \n ", recFile->data, recFile->seq_no,
+      //        recFile->type);
 
-      if (recFile->type == DATA && recFile->seq_no == (lrlowack + 1)) {
+      if (recFile->type == DATA &&
+          recFile->seq_no == ((lrlowack + 1) % WIN_SIZE)) {
         recvFile(recFile->data, NET_BUF_SIZE - 3);
         strcpy(sendAck->data, "\0");
         sendAck->type = ACK;
         sendAck->win_size = WIN_SIZE;
-        sendAck->seq_no = lrlowack + 1;
+        sendAck->seq_no = (lrlowack + 1) % WIN_SIZE;
         lrlowack = (lrlowack + 1) % WIN_SIZE;
-        sendto(sockfd, (char *)Readreq, NET_BUF_SIZE, sendrecvflag,
+        sendto(sockfd, (char *)sendAck, NET_BUF_SIZE, sendrecvflag,
                (struct sockaddr *)&addr_con, addrlen);
+        printf("\n got part no %d of file \n", got_part++);
       } else {
         // discard all out od order packet
-        printf("discarded out of order packet");
+        strcpy(sendAck->data, "\0");
+        sendAck->type = ACK;
+        sendAck->win_size = WIN_SIZE;
+        sendAck->seq_no = lrlowack;
+        sendto(sockfd, (char *)sendAck, NET_BUF_SIZE, sendrecvflag,
+               (struct sockaddr *)&addr_con, addrlen);
+        // printf("discarded out of order packet");
       }
     }
   } else if (Recvack->seq_no == 0 && Recvack->type == ERROR) {
