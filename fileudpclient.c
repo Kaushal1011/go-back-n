@@ -75,7 +75,7 @@ start:
     while (1) {
       recvfrom(sockfd, (char *)recFile, NET_BUF_SIZE, sendrecvflag,
                (struct sockaddr *)&addr_con, &addrlen);
-      // printf("%s", (char *)recFile);
+      printf("%s %d %d ", recFile->data, recFile->seq_no, recFile->type);
 
       if (recFile->type == DATA && recFile->seq_no == (lrlowack + 1)) {
         recvFile(recFile->data, NET_BUF_SIZE - 3);

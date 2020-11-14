@@ -120,29 +120,44 @@ startlow:
     char *timeout_window = calloc(1, WIN_SIZE * sizeof(char *));
 
     int seq_no = 0;
-    // pthread_t timeout_threads[WIN_SIZE];
-    // struct args **threadi =
-    //     (struct args **)malloc(WIN_SIZE * sizeof(struct args *));
-    // for (int i = 0; i < WIN_SIZE; i++) {
-    //   threadi[i] = (struct args *)malloc(sizeof(struct args));
-    // }
+    int last_received_ack = -1;
+    int part_of_file = -1;
+
     FileUDPPacket *sendData = calloc(1, sizeof(FileUDPPacket));
     FileUDPPacket *recAck = calloc(1, sizeof(FileUDPPacket));
 
     do {
-      sendData->type = DATA;
-      sendData->win_size = WIN_SIZE;
-      // strcpy(sendData->data, "Hello, World!");
-      sendFile(fp, sendData->data, NET_BUF_SIZE - 3);
-      sendData->seq_no = seq_no;
-      seq_no = (seq_no + 1) % WIN_SIZE;
-      sendto(sockfd, (char *)sendData, NET_BUF_SIZE, sendrecvflag,
-             (struct sockaddr *)&addr_con, addrlen);
-      // printf("\n%s\n", (char *)Readreq);
-      recvfrom(sockfd, (char *)recAck, NET_BUF_SIZE, sendrecvflag,
-               (struct sockaddr *)&addr_con, &addrlen);
+      printf("in loop");
+      for (int i = 0; i < WIN_SIZE; i++) {
+        sendData->type = DATA;
+        sendData->win_size = WIN_SIZE;
+        // strcpy(sendData->data, "Hello, World!");
+        sendFile(fp, sendData->data, NET_BUF_SIZE - 3);
+        sendData->seq_no = seq_no;
+        seq_no = (seq_no + 1) % WIN_SIZE;
+        sendto(sockfd, (char *)sendData, NET_BUF_SIZE, sendrecvflag,
+               (struct sockaddr *)&addr_con, addrlen);
+        printf("in inner loop");
+        recAck->type = -1;
+        recAck->seq_no = -1;
+        recvfrom(sockfd, (char *)recAck, NET_BUF_SIZE, sendrecvflag,
+                 (struct sockaddr *)&addr_con, &addrlen);
+        if (recAck->type == ACK && recAck->seq_no >= 0) {
+          last_received_ack = recAck->seq_no;
+        } else if (recAck->type == RRQ) {
+          goto startlow;
+        }
+        part_of_file++;
+
+      } // printf("\n%s\n", (char *)Readreq);
+      fseek(fp, -1 * (WIN_SIZE - last_received_ack), SEEK_CUR);
+      part_of_file -= (WIN_SIZE - last_received_ack);
+      last_received_ack = -1;
+      seq_no = 0;
       // free(threadi);
-    } while (1 == 1);
+    } while (fp);
+    free(sendData);
+    free(recAck);
   }
   free(Readreq);
   free(RRQreply);
